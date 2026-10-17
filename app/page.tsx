@@ -1,130 +1,224 @@
- "use client";
+"use client";
 
-import { useEffect, useState } from "react";
-import { ArrowDown, Check, ChevronRight, Code2, Cpu, Heart, PartyPopper, ShieldCheck, Sparkles, Terminal, Zap } from "lucide-react";
-
-const wishes = [
-  "Щоб усі задачі вирішувалися елегантно, а не через «працює — не чіпай».",
-  "Щоб дедлайни були людяними, а вихідні — недоторканними.",
-  "Щоб у житті було більше релізів із фічами «радість», «подорожі» та «приємні сюрпризи».",
-  "Щоб поруч були свої люди, з якими навіть складні таски стають простішими.",
-];
+import confetti from "canvas-confetti";
+import { Code2, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FinaleBanner } from "@/app/components/FinaleBanner";
+import { LetterCards } from "@/app/components/LetterCards";
+import { HOLD_DURATION, LETTERS } from "@/app/lib/constants";
+import { prefersReducedMotion } from "@/app/lib/motion";
+import { createSoundPlayer } from "@/app/lib/sounds";
 
 export default function Home() {
-  const [started, setStarted] = useState(false);
-  const [revealed, setRevealed] = useState(false);
-  const [typed, setTyped] = useState("");
-  const [confetti, setConfetti] = useState(false);
+  const [cardsState, setCardsState] = useState([false, false, false, false]);
+  const [bouncePrev, setBouncePrev] = useState<number | null>(null);
+  const [actionHint, setActionHint] = useState("💡 Залишилося відкрити картки!");
+  const [hintHidden, setHintHidden] = useState(false);
+  const [allUnlocked, setAllUnlocked] = useState(false);
+  const [showBanner, setShowBanner] = useState(false);
+  const [holdProgress, setHoldProgress] = useState(0);
 
-  const command = "npm run celebrate -- --user=Katya";
+  const soundsRef = useRef<ReturnType<typeof createSoundPlayer> | null>(null);
+  const holdRafRef = useRef<number | null>(null);
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdingRef = useRef(false);
+  const finaleTriggeredRef = useRef(false);
+  const cardsStateRef = useRef(cardsState);
+
   useEffect(() => {
-    if (!started) return;
-    setTyped("");
-    let index = 0;
-    const timer = window.setInterval(() => {
-      index += 1;
-      setTyped(command.slice(0, index));
-      if (index >= command.length) window.clearInterval(timer);
-    }, 36);
-    return () => window.clearInterval(timer);
-  }, [started]);
+    cardsStateRef.current = cardsState;
+  }, [cardsState]);
 
-  function launch() {
-    setStarted(true);
-    setRevealed(false);
-    setConfetti(false);
-  }
+  useEffect(() => {
+    soundsRef.current = createSoundPlayer();
+    return () => {
+      if (holdRafRef.current !== null) cancelAnimationFrame(holdRafRef.current);
+      if (holdTimeoutRef.current !== null) clearTimeout(holdTimeoutRef.current);
+      soundsRef.current?.dispose();
+      soundsRef.current = null;
+    };
+  }, []);
 
-  function reveal() {
-    setRevealed(true);
-    setConfetti(true);
-    window.setTimeout(() => setConfetti(false), 3200);
-  }
+  const launchCelebrationFireworks = useCallback(() => {
+    if (prefersReducedMotion()) return;
+
+    try {
+      const playBoomSound = () => soundsRef.current?.playBoomSound();
+      playBoomSound();
+      window.setTimeout(playBoomSound, 300);
+      window.setTimeout(playBoomSound, 600);
+    } catch {
+      // Audio may be unavailable; celebration visuals still run.
+    }
+
+    const duration = 4000;
+    const animationEnd = Date.now() + duration;
+    const interval = window.setInterval(() => {
+      const timeLeft = animationEnd - Date.now();
+      if (timeLeft <= 0) {
+        window.clearInterval(interval);
+        return;
+      }
+      const particleCount = 50 * (timeLeft / duration);
+      confetti({
+        particleCount,
+        startVelocity: 35,
+        spread: 360,
+        ticks: 60,
+        origin: { x: Math.random() * 0.4 + 0.1, y: Math.random() * 0.5 + 0.2 },
+      });
+      confetti({
+        particleCount,
+        startVelocity: 35,
+        spread: 360,
+        ticks: 60,
+        origin: { x: Math.random() * 0.4 + 0.5, y: Math.random() * 0.5 + 0.2 },
+      });
+    }, 250);
+  }, []);
+
+  const endHoldCard4 = useCallback(() => {
+    holdingRef.current = false;
+    if (holdRafRef.current !== null) {
+      cancelAnimationFrame(holdRafRef.current);
+      holdRafRef.current = null;
+    }
+    if (holdTimeoutRef.current !== null) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    setHoldProgress(0);
+  }, []);
+
+  const triggerGrandFinale = useCallback(() => {
+    if (finaleTriggeredRef.current) return;
+    finaleTriggeredRef.current = true;
+    endHoldCard4();
+    setHintHidden(true);
+    setShowBanner(true);
+    launchCelebrationFireworks();
+  }, [endHoldCard4, launchCelebrationFireworks]);
+
+  const onAllCardsUnlocked = useCallback(() => {
+    setAllUnlocked(true);
+    setActionHint("🔥 ТЕПЕР ЗАТИСНИ Й ТРИМАЙ 4-ТЕ ВІКОНЕЧКО!");
+  }, []);
+
+  const revealCard = useCallback(
+    (index: number) => {
+      const state = cardsStateRef.current;
+      if (index > 0 && !state[index - 1]) {
+        setBouncePrev(index - 1);
+        window.setTimeout(() => setBouncePrev(null), 800);
+        setActionHint(`Спочатку відкрий картку №${index}! 🔑`);
+        return;
+      }
+      if (state[index]) return;
+
+      const next = [...state];
+      next[index] = true;
+      cardsStateRef.current = next;
+      setCardsState(next);
+
+      if (index < 3) {
+        setActionHint(`Відкривай віконечко №${index + 2}! ✨`);
+      } else {
+        onAllCardsUnlocked();
+      }
+
+      if (!prefersReducedMotion()) {
+        try {
+          const pitches = [320, 400, 480, 560];
+          soundsRef.current?.playFlipSound(pitches[index]);
+        } catch {
+          // Ignore audio failures so card flow keeps working.
+        }
+        confetti({ particleCount: 25, spread: 50, origin: { y: 0.65 } });
+      }
+    },
+    [onAllCardsUnlocked],
+  );
+
+  const handleCard4Click = () => {
+    const state = cardsStateRef.current;
+    if (!state[2]) {
+      revealCard(3);
+      return;
+    }
+    if (!state[3]) revealCard(3);
+  };
+
+  const startHoldCard4 = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!cardsStateRef.current[3] || finaleTriggeredRef.current) return;
+    e.preventDefault();
+
+    holdingRef.current = true;
+    const start = Date.now();
+
+    const step = () => {
+      if (!holdingRef.current) return;
+      const progress = Math.min((Date.now() - start) / HOLD_DURATION, 1);
+      setHoldProgress(progress);
+      if (progress < 1) {
+        holdRafRef.current = requestAnimationFrame(step);
+      }
+    };
+
+    holdRafRef.current = requestAnimationFrame(step);
+    holdTimeoutRef.current = setTimeout(() => {
+      if (holdingRef.current) triggerGrandFinale();
+    }, HOLD_DURATION);
+  };
 
   return (
-    <main className="page-shell">
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-      <nav className="topbar">
-        <a className="brand" href="#top"><span className="brand-mark"><Terminal size={16} /></span> afterhours<span className="brand-dot">.dev</span></a>
-        <div className="nav-status"><span className="status-dot" /> SYSTEM ONLINE</div>
-      </nav>
+    <div className="flex flex-col items-center justify-between min-h-screen p-4 sm:p-6 relative select-none">
+      <div className="glow-bg w-96 h-96 bg-purple-600 top-10 -left-20 animate-pulse" />
+      <div className="glow-bg w-96 h-96 bg-pink-500 bottom-10 -right-20 animate-pulse" style={{ animationDelay: "1s" }} />
+      <div className="glow-bg w-80 h-80 bg-indigo-500 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
 
-      <section className="hero" id="top">
-        <div className="eyebrow"><span className="eyebrow-line" /> SPECIAL OCCASION // 001 <span className="eyebrow-line" /></div>
-        <div className="hero-grid">
-          <div className="hero-copy">
-            <div className="tiny-label"><Code2 size={14} /> PERSONALIZED BUILD</div>
-            <h1>Hey, <span>Katya</span><br />it&apos;s your<br /><em>day.</em></h1>
-            <p className="hero-subtitle">Сьогодні в продакшен виходить найкраща версія — <strong>Катя {new Date().getFullYear()}</strong>. І в цьому релізі немає жодного критичного бага.</p>
-            <div className="hero-actions">
-              <button className="primary-button" onClick={launch}><Zap size={17} /> Запустити протокол <ChevronRight size={17} /></button>
-              <a className="text-link" href="#manifesto">Переглянути changelog <ArrowDown size={14} /></a>
-            </div>
-            <div className="micro-note"><ShieldCheck size={14} /> 100% good vibes · 0% робочих мітингів</div>
+      <main className="relative z-10 w-full max-w-4xl flex flex-col items-center justify-center my-auto py-8">
+        <header className="text-center mb-8 sm:mb-12 transition-all duration-500">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-xs sm:text-sm font-semibold text-pink-300 mb-4 shadow-lg animate-float">
+            <Code2 className="size-3.5 text-purple-400" aria-hidden="true" />
+            <span>Special Release v2.026 • Birthday Edition</span>
+            <Sparkles className="size-3.5 text-amber-300" aria-hidden="true" />
           </div>
 
-          <div className="terminal-card">
-            <div className="terminal-header">
-              <div className="window-dots"><i /><i /><i /></div>
-              <span>birthday_protocol.sh</span>
-              <span className="terminal-lock"><ShieldCheck size={13} /> SAFE MODE</span>
-            </div>
-            <div className="terminal-body">
-              <div className="terminal-line"><span className="prompt">➜</span> <span className="muted">~/celebrations</span> ./init-birthday.sh</div>
-              <div className="output"><span className="success">✓</span> Loading happiness modules...</div>
-              <div className="output"><span className="success">✓</span> Disabling unnecessary stress...</div>
-              <div className="output"><span className="success">✓</span> Increasing good luck to 100%</div>
-              <div className="output"><span className="success">✓</span> Coffee supply: <span className="pink">infinite</span></div>
-              <div className="terminal-rule" />
-              <div className="terminal-line"><span className="prompt">➜</span> <span className="muted">status</span></div>
-              <div className="status-result"><span className="status-big">ALL SYSTEMS GO</span><span className="pulse-dot" /></div>
-              <div className="terminal-footer"><span>build v{new Date().getFullYear()}.10.17</span><span>made with <Heart size={12} fill="currentColor" /> &amp; caffeine</span></div>
-            </div>
+          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-300 to-indigo-300 tracking-tight font-display drop-shadow-md">
+            Особливе Привітання
+          </h1>
+
+          <p className="text-slate-300 text-sm sm:text-base mt-3 max-w-md mx-auto font-medium transition-all duration-300">
+            Натискай на віконечка по черзі, щоб відкрити секретне ім&apos;я! ✨
+          </p>
+        </header>
+
+        <LetterCards
+          letters={LETTERS}
+          cardsState={cardsState}
+          allUnlocked={allUnlocked}
+          bouncePrev={bouncePrev}
+          holdProgress={holdProgress}
+          onReveal={revealCard}
+          onCard4Click={handleCard4Click}
+          onHoldStart={startHoldCard4}
+          onHoldEnd={endHoldCard4}
+        />
+
+        {!hintHidden && (
+          <div className="w-full max-w-md text-center h-12 flex items-center justify-center my-2" aria-live="polite" aria-atomic="true">
+            <span className="text-xs sm:text-sm font-semibold text-slate-400 bg-slate-900/60 px-4 py-2 rounded-full border border-slate-700/50 backdrop-blur-sm">
+              {actionHint}
+            </span>
           </div>
-        </div>
-        <div className="scroll-hint"><span /> SCROLL TO EXPLORE</div>
-      </section>
+        )}
 
-      <section className="protocol-section" id="protocol">
-        <div className="section-kicker">01 / THE PROTOCOL</div>
-        <div className="protocol-panel">
-          <div className="panel-heading"><span className="panel-icon"><Terminal size={17} /></span><div><h2>Birthday Protocol</h2><p>root@good-vibes:~# ./make_day_great.sh</p></div><span className="panel-live">READY</span></div>
-          <div className="command-area">
-            <div className="command-label">COMMAND LINE INTERFACE</div>
-            <div className="command-text"><span className="command-prompt">$</span> {started ? typed : "await birthday.initialize('Katya')"}<span className="cursor" /></div>
-            <div className="command-hint">{started ? "Команда виконується. Система готує щось хороше..." : "Натисни кнопку вище, щоб запустити персональний протокол."}</div>
-            {started && <button className="reveal-button" onClick={reveal} disabled={typed.length < command.length}>{revealed ? <><Check size={16} /> Протокол виконано</> : <>Відкрити повідомлення <ChevronRight size={16} /></>}</button>}
-          </div>
-          {revealed && <div className="success-message">
-            <div className="success-orb"><PartyPopper size={24} /></div>
-            <div className="success-label">DEPLOYMENT SUCCESSFUL</div>
-            <h3>З днем народження, Катю! <span>✦</span></h3>
-            <p>Бажаю, щоб життя частіше дивувало приємними апдейтами, поруч були надійні люди, а кожен новий день приносив хоча б одну причину усміхнутися. Нехай усе важливе складається, мрії переходять у статус <code>DONE</code>, а щастя не потребує жодних виправлень.</p>
-            <div className="confetti-row" aria-hidden="true">{confetti && Array.from({length: 26}, (_, i) => <i key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 8) * 0.11}s`, transform: `rotate(${i * 29}deg)` }} />)}</div>
-          </div>}
-        </div>
-      </section>
+        {showBanner && <FinaleBanner onCelebrate={launchCelebrationFireworks} />}
+      </main>
 
-      <section className="manifesto-section" id="manifesto">
-        <div className="section-kicker">02 / RELEASE NOTES</div>
-        <div className="manifesto-header"><h2>What&apos;s new<br />in <span>Katya 2.0?</span></h2><p>Офіційний changelog цього релізу.<br />Покращення вже доступні — перезапуск не потрібен.</p></div>
-        <div className="wishes-grid">
-          {wishes.map((wish, index) => <article className="wish-card" key={wish}><div className="wish-top"><span className="wish-number">0{index + 1}</span>{index === 0 ? <Code2 /> : index === 1 ? <Zap /> : index === 2 ? <Sparkles /> : <Heart />}</div><p>{wish}</p><span className="wish-tag">FEATURE ADDED</span></article>)}
-        </div>
-      </section>
-
-      <section className="outro-section">
-        <div className="outro-glow" />
-        <div className="section-kicker">03 / FINAL MESSAGE</div>
-        <Cpu className="outro-icon" size={29} />
-        <h2>Stay awesome.<br /><span>Keep being you.</span></h2>
-        <p>Нехай наступний рік буде стабільним, яскравим і повним приємних несподіванок. А якщо життя раптом видасть помилку — нехай поруч знайдеться хтось, хто допоможе натиснути «спробувати ще раз».</p>
-        <div className="outro-signature"><span className="signature-line" /> end of message <span className="signature-line" /></div>
-        <div className="outro-stamp"><Sparkles size={15} /> APPROVED FOR CELEBRATION</div>
-      </section>
-
-      <footer className="footer"><a className="brand" href="#top"><span className="brand-mark"><Terminal size={15} /></span> afterhours<span className="brand-dot">.dev</span></a><span>NO BUGS. JUST BIRTHDAY MAGIC.</span><span>© {new Date().getFullYear()} · KATYA.EXE</span></footer>
-    </main>
+      <footer className="relative z-10 text-center text-xs text-slate-500 py-4">
+        Створено з любов&apos;ю та повагою для найкрутішої айтішниці Каті 💻✨
+      </footer>
+    </div>
   );
 }

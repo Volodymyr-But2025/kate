@@ -38,8 +38,11 @@ npx vercel --prod
 ```
 
 ## Customize
-- Main text, terminal output, and wish cards: `app/page.tsx`
-- Colors, layout, typography, animations: `app/globals.css`
+- Letter cards, hints, and page flow: `app/page.tsx`
+- Card UI: `app/components/LetterCards.tsx`
+- Birthday banner and “replay salute” button: `app/components/FinaleBanner.tsx`
+- Sounds: `app/lib/sounds.ts`
+- Colors, typography, card flip, animations: `app/globals.css`
 - Browser title and description: `app/layout.tsx`
 
 The page does not need a database, API keys, or environment variables.
